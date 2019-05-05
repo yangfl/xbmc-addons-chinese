@@ -5,6 +5,7 @@ import xbmc
 import xbmcaddon
 import xbmcgui
 import xbmcplugin
+import web_pdb
 
 import re
 import socket
@@ -87,28 +88,16 @@ def main():
 			urlsToTry = 5
 			
 			if jsondata.has_key("hls_url"):
-				if url == None:
+				for i in range(1, 6):
+					hlsStream = "hls" + str(i)
 					urlsTried += 1
-					pDialog.update(urlsTried / urlsToTry * 100, "{0} {1} (HLS)".format(addon.getLocalizedString(30011), "hls1"))
-					url = tryHLSStream(jsondata, "hls1")
-				if url == None:
-					urlsTried += 1
-					pDialog.update(urlsTried / urlsToTry * 100, "{0} {1} (HLS)".format(addon.getLocalizedString(30011), "hls1"))
-					url = tryHLSStream(jsondata, "hls2")
-				if url == None:
-					urlsTried += 1
-					pDialog.update(urlsTried / urlsToTry * 100, "{0} {1} (HLS)".format(addon.getLocalizedString(30011), "hls1"))
-					url = tryHLSStream(jsondata, "hls3")
-				if url == None:
-					urlsTried += 1
-					pDialog.update(urlsTried / urlsToTry * 100, "{0} {1} (HLS)".format(addon.getLocalizedString(30011), "hls1"))
-					url = tryHLSStream(jsondata, "hls4")
-				if url == None:
-					urlsTried += 1
-					pDialog.update(urlsTried / urlsToTry * 100, "{0} {1} (HLS)".format(addon.getLocalizedString(30011), "hls1"))
-					url = tryHLSStream(jsondata, "hls5")
-			
+					pDialog.update(urlsTried / urlsToTry * 100, "{0} {1} (HLS)".format(addon.getLocalizedString(30011), hlsStream))
+					url = tryHLSStream(jsondata, hlsStream)
+					if url:
+						break
+						
 			if pDialog.iscanceled(): return
+			web_pdb.set_trace()
 			
 			#if url is None and jsondata.has_key("hls_url"):
 			#	tryHLSStream(jsondata, "hls4")
@@ -119,13 +108,6 @@ def main():
 				return
 			
 			print("Loading URL {0}".format(url))
-			
-			auth = urlparse.parse_qs(urlparse.urlparse(url)[4])["AUTH"][0]
-			print("Got AUTH {0}".format(auth))
-			
-			url = url + "|" + urllib.urlencode( { "Cookie" : "AUTH=" + auth } )
-			
-			print("Built URL {0}".format(url))
 			
 			pDialog.close()
 			xbmc.Player().play(url)

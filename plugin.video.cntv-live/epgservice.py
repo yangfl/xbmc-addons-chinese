@@ -5,76 +5,90 @@ import xbmcaddon
 
 import datetime
 import re
-import shutil
+import os
 import traceback
 import urllib2
+
+try:
+	import simplejson as jsonimpl
+except ImportError:
+	import json as jsonimpl
+
 
 addon = xbmcaddon.Addon(id="plugin.video.cntv-live")
 addon_path = xbmc.translatePath(addon.getAddonInfo("path"))
 
+
+ZERO = datetime.timedelta(0)
+
+
+class FixedOffset(datetime.tzinfo):
+	"""Fixed offset in minutes east from UTC."""
+
+	def __init__(self, offset, name):
+		self.__offset = datetime.timedelta(minutes = offset)
+		self.__name = name
+
+	def utcoffset(self, dt):
+		return self.__offset
+
+	def tzname(self, dt):
+		return self.__name
+
+	def dst(self, dt):
+		return ZERO
+
+
+CST = FixedOffset(8 * 60, 'CST')
+
+
 def updateChannel(fHandle, channelID, channelName):
 	try:
 		print("Updating channel " + channelID)
-		
-		dateInChina = (datetime.datetime.utcnow() + datetime.timedelta(hours=8)).replace(hour=0, minute=0) #UTC +0800
-		localTZ = datetime.datetime.now() - datetime.datetime.utcnow() #UTC + how much?
-		tzOffset = localTZ - datetime.timedelta(hours=8) #how much ahead of China
-		
+
+		dateInChina = datetime.datetime.now(CST)
+
 		#Get data
-		request = urllib2.Request("http://tv.cntv.cn/index.php?action=epg-list&date=" + dateInChina.strftime("%Y-%m-%d") + "&channel=" + channelID)
+		request = urllib2.Request("http://api.cntv.cn/epg/epginfo?serviceId=shiyi&d=" + dateInChina.strftime("%Y%m%d") + "&c=" + channelID)
 		request.add_header("Referer", "http://tv.cntv.cn/epg")
 		resp = urllib2.urlopen(request)
 		data = resp.read().decode("utf-8")
-		
-		match = re.compile('<dd(?: class="cur1")?>(.+?)</dd>', re.DOTALL).findall(data)
-		
+
 		#Process data
-		programmes = []
-		for entry in match:
-			linkValue = re.compile('>(.+?)<', re.DOTALL).search(entry).group(1) #Wow... There's actually a syntax error in the page.
-			
-			timeString = linkValue[:linkValue.index(" ")]
-			entryTime = dateInChina.replace(hour=int(timeString[:timeString.index(":")]), minute=int(timeString[timeString.index(":") + 1:]))
-			
-			entryName = linkValue[linkValue.index(" ") + 1:]
-			programmes.append((entryTime, entryName))
-		
+		jsondata = jsonimpl.loads(data)
+		programmes = jsondata[channelID]['program']
+
 		#Write channel data
 		fHandle.write('<channel id="{0}">\n'.format(channelID))
 		fHandle.write('<display-name lang="cn">{0}</display-name>\n'.format(channelName))
 		fHandle.write('</channel>\n'.format(channelID))
-		
+
 		#Write programme data
-		for i in range(len(programmes)):
-			entry = programmes[i]
-			startTime = entry[0]
-			if i < len(programmes) - 1: #EAFP is too hard.
-				stopTime = programmes[i + 1][0]
-			else:
-				stopTime = dateInChina + datetime.timedelta(days=1)
-			
+		for entry in programmes:
 			#Convert to local time zone
-			startTime = startTime + tzOffset
-			stopTime = stopTime + tzOffset
-			
+			startTime = datetime.datetime.fromtimestamp(entry['st'], CST)
+			stopTime = datetime.datetime.fromtimestamp(entry['et'], CST)
+
 			fHandle.write('<programme start="{0}" stop="{1}" channel="{2}">\n'.format(formatDate(startTime), formatDate(stopTime), channelID))
-			fHandle.write('<title lang="cn">{0}</title>\n'.format(entry[1].encode("utf-8")))
+			fHandle.write('<title lang="cn">{0}</title>\n'.format(entry['t'].encode("utf-8")))
 			fHandle.write('</programme>\n')
 	except Exception:
 		print(traceback.format_exc())
 
+
 def formatDate(obj):
 	return obj.strftime("%Y%m%d%H%M00")
 
+
 def doUpdate():
 	print("Updating EPG")
-	
+
 	try:
 		fHandle = open(xbmc.translatePath("special://temp/epg2.xml"), "w")
 		fHandle.write('<?xml version="1.0" encoding="utf-8" ?>\n')
 		fHandle.write('<tv>\n')
-		
-		if addon.getSetting("epgYangshi") == "true":
+
+		if addon.getSettingBool("epgYangshi"):
 			updateChannel(fHandle, "cctv1", "CCTV-1 综合")
 			updateChannel(fHandle, "cctv2", "CCTV-2 财经")
 			updateChannel(fHandle, "cctv3", "CCTV-3 综艺")
@@ -95,8 +109,8 @@ def doUpdate():
 			updateChannel(fHandle, "cctv15", "CCTV-15 音乐")
 			updateChannel(fHandle, "cctv9", "CCTV-NEWS")
 			updateChannel(fHandle, "cctv5plus", "CCTV体育赛事")
-		
-		if addon.getSetting("epgWeishi") == "true":
+
+		if addon.getSettingBool("epgWeishi"):
 			updateChannel(fHandle, "anhui", "安徽卫视")
 			updateChannel(fHandle, "btv1", "北京卫视")
 			updateChannel(fHandle, "bingtuan", "兵团卫视")
@@ -134,22 +148,24 @@ def doUpdate():
 			updateChannel(fHandle, "yanbian", "延边卫视")
 			updateChannel(fHandle, "yunnan", "云南卫视")
 			updateChannel(fHandle, "zhejiang", "浙江卫视")
-		
+
 		fHandle.write('</tv>\n')
 		fHandle.close()
-		
-		shutil.copyfile(xbmc.translatePath("special://temp/epg2.xml"), xbmc.translatePath("special://temp/epg.xml")) #Good programming practices, yo!
+
+		os.rename(xbmc.translatePath("special://temp/epg2.xml"), xbmc.translatePath("special://temp/epg.xml")) #Good programming practices, yo!
 	except Exception:
 		print(traceback.format_exc())
-	
+
 	print("Finished updating EPG")
-	
-	#Set a timer for the next update
-	startTimer(30)
+
 
 def startTimer(delay): #minutes
 	xbmc.executebuiltin("AlarmClock({0},RunScript({1}),{2},True)".format("EPGUpdate", addon_path + "/epgservice.py", delay))
 
+
 if __name__ == '__main__':
-	if addon.getSetting("epg") == "true":
+	if addon.getSettingBool("epg"):
 		doUpdate()
+
+	#Set a timer for the next update
+	startTimer(30)
