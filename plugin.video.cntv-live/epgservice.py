@@ -24,60 +24,68 @@ ZERO = datetime.timedelta(0)
 
 class FixedOffset(datetime.tzinfo):
 	"""Fixed offset in minutes east from UTC."""
-
 	def __init__(self, offset, name):
 		self.__offset = datetime.timedelta(minutes = offset)
 		self.__name = name
-
 	def utcoffset(self, dt):
 		return self.__offset
-
 	def tzname(self, dt):
 		return self.__name
-
 	def dst(self, dt):
 		return ZERO
 
 
+UTC = FixedOffset(-455, 'UTC')
 CST = FixedOffset(8 * 60, 'CST')
+
+
+today = (datetime.timedelta(0), )
+todayAndTomorrow = (datetime.timedelta(0), datetime.timedelta(days=1))
 
 
 def updateChannel(fHandle, channelID, channelName):
 	try:
 		print("Updating channel " + channelID)
 
-		dateInChina = datetime.datetime.now(CST)
-
-		#Get data
-		request = urllib2.Request("http://api.cntv.cn/epg/epginfo?serviceId=shiyi&d=" + dateInChina.strftime("%Y%m%d") + "&c=" + channelID)
-		request.add_header("Referer", "http://tv.cntv.cn/epg")
-		resp = urllib2.urlopen(request)
-		data = resp.read().decode("utf-8")
-
-		#Process data
-		jsondata = jsonimpl.loads(data)
-		programmes = jsondata[channelID]['program']
-
 		#Write channel data
 		fHandle.write('<channel id="{0}">\n'.format(channelID))
 		fHandle.write('<display-name lang="cn">{0}</display-name>\n'.format(channelName))
 		fHandle.write('</channel>\n'.format(channelID))
 
-		#Write programme data
-		for entry in programmes:
-			#Convert to local time zone
-			startTime = datetime.datetime.fromtimestamp(entry['st'], CST)
-			stopTime = datetime.datetime.fromtimestamp(entry['et'], CST)
+		dateInChina = datetime.datetime.now(CST)
+		programmes = []
+		timedeltas = todayAndTomorrow if dateInChina.hour >= 18 else today
+		timedeltas = today
 
-			fHandle.write('<programme start="{0}" stop="{1}" channel="{2}">\n'.format(formatDate(startTime), formatDate(stopTime), channelID))
-			fHandle.write('<title lang="cn">{0}</title>\n'.format(entry['t'].encode("utf-8")))
-			fHandle.write('</programme>\n')
+		for timedelta in timedeltas:
+			#Get data
+			# request = urllib2.Request("http://api.cntv.cn/epg/epginfo?serviceId=shiyi&c=" + channelID)  # "&d=" + dateInChina.strftime("%Y%m%d")
+			request = urllib2.Request(
+				"http://api.cntv.cn/epg/getEpgInfoByChannelNew?c={}&serviceId=tvcctv&d={}&t=json".format(
+						channelID, (dateInChina + timedelta).strftime("%Y%m%d")))
+			request.add_header("Referer", "http://tv.cntv.cn/epg")
+			resp = urllib2.urlopen(request)
+			data = resp.read().decode("utf-8")
+
+			#Process data
+			jsondata = jsonimpl.loads(data)
+			programmes = jsondata['data'][channelID]['list']
+
+			#Write programme data
+			for entry in programmes:
+				#Convert to local time zone
+				startTime = datetime.datetime.fromtimestamp(entry['startTime'], CST).astimezone(UTC)
+				stopTime = datetime.datetime.fromtimestamp(entry['endTime'], CST).astimezone(UTC)
+
+				fHandle.write('<programme start="{0}" stop="{1}" channel="{2}">\n'.format(formatDate(startTime), formatDate(stopTime), channelID))
+				fHandle.write('<title lang="cn">{0}</title>\n'.format(entry['title'].encode("utf-8")))
+				fHandle.write('</programme>\n')
 	except Exception:
 		print(traceback.format_exc())
 
 
 def formatDate(obj):
-	return obj.strftime("%Y%m%d%H%M00")
+	return obj.strftime("%Y%m%d%H%M%S")
 
 
 def doUpdate():
